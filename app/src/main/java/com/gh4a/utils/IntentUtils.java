@@ -86,7 +86,7 @@ public class IntentUtils {
         if (uri == null) {
             return;
         }
-        Intent intent = createBrowserIntent(context, uri);
+        Intent intent = createBrowserIntent(context, uri, false);
         if (intent != null) {
             try {
                 intent.addFlags(flags);
@@ -99,32 +99,19 @@ public class IntentUtils {
         Toast.makeText(context, R.string.no_browser_found, Toast.LENGTH_LONG).show();
     }
 
-    // We want to forward the URI to a browser, but our own intent filter matches
-    // the browser's intent filters. We therefore resolve the intent by ourselves,
-    // strip our own entry from the list and pass the result to the system's
-    // activity chooser.
-    // When doing that, pass a dummy URI to the resolver and swap in our real URI
-    // later, as otherwise the system might return our package only if it's set
-    // to handle the Github URIs by default
-    private static Uri buildDummyUri(Uri uri) {
-        return uri.buildUpon().authority("www.somedummy.com").build();
-    }
-
-    private static Intent createBrowserIntent(Context context, Uri uri) {
-        final Uri dummyUri = buildDummyUri(uri);
-        final Intent browserIntent = new Intent(Intent.ACTION_VIEW, dummyUri)
+    private static Intent createBrowserIntent(Context context, Uri uri, boolean onlySpecialized) {
+        final Intent browserIntent = new Intent(Intent.ACTION_VIEW, uri)
                 .addCategory(Intent.CATEGORY_BROWSABLE);
-        return createActivityChooserIntent(context, browserIntent, uri);
+        return createActivityChooserIntent(context, browserIntent, onlySpecialized);
     }
 
     public static Intent createViewerOrBrowserIntent(Context context, Uri uri, String mime) {
-        final Uri dummyUri = buildDummyUri(uri);
-        final Intent viewIntent = new Intent(Intent.ACTION_VIEW).setDataAndType(dummyUri, mime);
-        final Intent resolvedViewIntent = createActivityChooserIntent(context, viewIntent, uri);
+        final Intent viewIntent = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime);
+        final Intent resolvedViewIntent = createActivityChooserIntent(context, viewIntent, false);
         if (resolvedViewIntent != null) {
             return resolvedViewIntent;
         }
-        return createBrowserIntent(context, uri);
+        return createBrowserIntent(context, uri, false);
     }
 
     public static void openInCustomTabOrBrowser(Activity activity, Uri uri) {
@@ -132,6 +119,14 @@ public class IntentUtils {
     }
 
     public static void openInCustomTabOrBrowser(Activity activity, Uri uri, int headerColor) {
+        Intent specializedIntent = createBrowserIntent(activity, uri, true);
+        if (specializedIntent != null) {
+            try {
+                activity.startActivity(specializedIntent);
+                return;
+            } catch (ActivityNotFoundException e) {}
+        }
+
         SharedPreferences prefs = activity.getSharedPreferences(SettingsFragment.PREF_NAME,
                 Context.MODE_PRIVATE);
         boolean customTabsEnabled = prefs.getBoolean(SettingsFragment.KEY_CUSTOM_TABS, true);
@@ -186,11 +181,11 @@ public class IntentUtils {
         clipboardManager.setPrimaryClip(clipData);
     }
 
-    private static Intent createActivityChooserIntent(Context context, Intent intent, Uri uri) {
+    private static ArrayList<String> getPackageNames(Context context, Intent intent) {
         final PackageManager pm = context.getPackageManager();
         final List<ResolveInfo> activities = pm.queryIntentActivities(intent,
                 PackageManager.MATCH_DEFAULT_ONLY);
-        final ArrayList<Intent> chooserIntents = new ArrayList<>();
+        final ArrayList<String> packageNames = new ArrayList<>();
         final String ourPackageName = context.getPackageName();
 
         Collections.sort(activities, new ResolveInfo.DisplayNameComparator(pm));
@@ -204,14 +199,39 @@ public class IntentUtils {
                 continue;
             }
 
-            Intent targetIntent = new Intent(intent);
-            targetIntent.setPackage(info.packageName);
-            targetIntent.setDataAndType(uri, intent.getType());
-            chooserIntents.add(targetIntent);
+            packageNames.add(info.packageName);
         }
 
-        if (chooserIntents.isEmpty()) {
+        return packageNames;
+    }
+
+    // We want to forward the URI to a browser, but our own intent filter matches
+    // the browser's intent filters. We therefore resolve the intent by ourselves,
+    // strip our own entry from the list and pass the result to the system's
+    // activity chooser.
+    // The system might return only our package if it's set to handle the Github
+    // URIs by default, so pass in a dummy URI to the resolver and swap in our
+    // real URI later if we only get our package.
+    private static Intent createActivityChooserIntent(Context context, Intent intent, boolean onlySpecialized) {
+        final Uri dummyUri = Uri.fromParts(intent.getScheme(), "", null);
+        final Intent dummyIntent = new Intent(intent).setDataAndType(dummyUri, intent.getType());
+        ArrayList<String> packageNames = getPackageNames(context, intent);
+        final ArrayList<String> unspecializedPackageNames = getPackageNames(context, dummyIntent);
+
+        if (onlySpecialized) {
+            packageNames.removeAll(unspecializedPackageNames);
+        } else if (packageNames.isEmpty()) {
+            packageNames = unspecializedPackageNames;
+        }
+        if (packageNames.isEmpty()) {
             return null;
+        }
+
+        final ArrayList<Intent> chooserIntents = new ArrayList<>();
+        for (String packageName : packageNames) {
+            Intent targetIntent = new Intent(intent);
+            targetIntent.setPackage(packageName);
+            chooserIntents.add(targetIntent);
         }
 
         final Intent lastIntent = chooserIntents.remove(chooserIntents.size() - 1);

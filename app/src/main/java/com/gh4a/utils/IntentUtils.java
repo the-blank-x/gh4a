@@ -12,6 +12,7 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
+import android.util.Log;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcel;
@@ -121,6 +122,7 @@ public class IntentUtils {
     public static void openInCustomTabOrBrowser(Activity activity, Uri uri, int headerColor) {
         Intent specializedIntent = createBrowserIntent(activity, uri, true);
         if (specializedIntent != null) {
+            Log.d("blanket", "specialized intent exists, calling");
             try {
                 activity.startActivity(specializedIntent);
                 return;
@@ -190,17 +192,22 @@ public class IntentUtils {
 
         Collections.sort(activities, new ResolveInfo.DisplayNameComparator(pm));
 
+        Log.d("blanket", "BEGIN PACKAGE LIST");
         for (ResolveInfo resInfo : activities) {
             ActivityInfo info = resInfo.activityInfo;
             if (!info.enabled || !info.exported) {
+                Log.d("blanket", info.packageName + " excluded due to not being enabled or exported");
                 continue;
             }
             if (info.packageName.equals(ourPackageName)) {
+                Log.d("blanket", info.packageName + " excluded due to being " + ourPackageName);
                 continue;
             }
 
+            Log.d("blanket", info.packageName + " added");
             packageNames.add(info.packageName);
         }
+        Log.d("blanket", "END PACKAGE LIST");
 
         return packageNames;
     }
@@ -227,12 +234,15 @@ public class IntentUtils {
             return null;
         }
 
+        Log.d("blanket", "BEGIN SORTED PACKAGE LIST");
         final ArrayList<Intent> chooserIntents = new ArrayList<>();
         for (String packageName : packageNames) {
+            Log.d("blanket", packageName);
             Intent targetIntent = new Intent(intent);
             targetIntent.setPackage(packageName);
             chooserIntents.add(targetIntent);
         }
+        Log.d("blanket", "END SORTED PACKAGE LIST");
 
         final Intent lastIntent = chooserIntents.remove(chooserIntents.size() - 1);
         if (chooserIntents.isEmpty()) {
